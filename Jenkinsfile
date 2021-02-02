@@ -8,16 +8,29 @@ pipeline {
     artifactoryImageTag = ''
     imageLine = 'datoma/dockle:latest'
     GIT_URL = 'git@github.com:datoma/dockle.git'
-    GIT_BRANCH = 'lts'
+    GIT_BRANCH = 'master'
     GIT_CREDENTIALS = 'Github_ssh'
   }
 
-  parameters{    
-    booleanParam(defaultValue: false, description: 'some description', name: 'SOME_FLAG')
+  parameters{
+    text(defaultValue: "latest", description: 'tag to build/push', name: 'DOCKER_IMAGE_TAG')
+    booleanParam(defaultValue: false, description: 'deploy to dockerhub', name: 'PUSH_DOCKER')
+    booleanParam(defaultValue: false, description: 'deploy to artifactory', name: 'PUSH_ARTIFACTORY')
   }
 
   agent any
   stages {
+    stage("check params") {
+      steps {
+        script {
+          params.each {
+            if (DOCKER_IMAGE_TAG == null || DOCKER_IMAGE_TAG == "" || DOCKER_IMAGE_TAG == "latest")
+              ex(DOCKER_IMAGE_TAG)
+            }
+        }
+      }
+    }
+
     stage ("prepare") {
       steps {
         script {
@@ -44,44 +57,30 @@ pipeline {
     stage('Building the image') {
       steps {
         script {
-          dockerHubImageLatest = docker.build("${DOCKERHUB_IMAGE_NAME}:latest")
+          docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+            dockerHubImageLatest = docker.build("${DOCKERHUB_IMAGE_NAME}:latest")
+          }
         }
       }
     }
     
     stage('Tagging the image') {
-      parallel {
-        stage('push Dockerhub Tag') {
-          steps {
-            script {
-              dockerHubImagetag = docker.build("${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
-            }
-          }
-        }
-        stage('push Artifactory latest') {
-          steps {
-            script {
-              artifactoryImageLatest = docker.build("${ARTIFACTORY_IMAGE_NAME}:latest")
-            }
-          }
-        }
-        stage('push Artifactory Tag') {
-          steps {
-            script {
-              artifactoryImageTag = docker.build("${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
-            }
+      steps {
+        script {
+          docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+            dockerHubImagetag = docker.build("${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
           }
         }
       }
     }
 
-    stage('Trivy, dockle and hadolint tests') {
+    stage('Test stages') {
       parallel {
         stage('Trivy Tag and latest') {
           steps {
               script {
                 trivy_latest = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro datoma/trivy-server:latest trivy client --remote https://trivy.blackboards.de ${DOCKERHUB_IMAGE_NAME}:latest')
-                trivy_tag = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro datoma/trivy-server:latest trivy client --remote https://trivy.blackboards.de --ignore-unfixed --exit-code 1 --severity CRITICAL,HIGH,MEDIUM ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
+                trivy_tag = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro datoma/trivy-server:latest trivy client --remote https://trivy.blackboards.de --ignore-unfixed --severity CRITICAL,HIGH,MEDIUM ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
               }
               echo "TRIVY latest: ${trivy_latest}"
               writeFile(file: 'trivy-latest.txt', text: "${trivy_latest}")
@@ -113,7 +112,12 @@ pipeline {
       }
     }
 
-    stage('Deploy the latest image') {
+    stage('Deploy Images to Dockerhub') {
+      when {
+        expression { 
+          params.PUSH_DOCKER == true
+        }
+      }
       parallel {
         stage('Deploy image with latest to Dockerhub') {
           steps {
@@ -124,20 +128,6 @@ pipeline {
             }
           }
         }
-        stage('Deploy image with latest to Artifactory') {
-          steps {
-            script {
-                docker.withRegistry('https://datoma.jfrog.io/artifactory', 'ArtifactoryDockerhub') {
-                artifactoryImageLatest.push()
-              }
-            }
-          }
-        }
-      }
-    }
-
-    stage('Deploy the tagged image') {
-      parallel {
         stage('Deploy image with tag to Dockerhub') {
           steps {
             script {
@@ -147,10 +137,43 @@ pipeline {
             }
           }
         }
-        stage('Deploy image with tag to Artifactory') {
+      }
+    }
+
+    stage('Tagging Artifactory images') {
+      when {
+        expression { 
+          params.PUSH_ARTIFACTORY == true
+        }
+      }
+      steps {
+        script {
+          artifactoryImageLatest = docker.build("${ARTIFACTORY_IMAGE_NAME}:latest")
+          artifactoryImageTag = docker.build("${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
+        }
+      }
+    }
+
+    stage('Push images to Artifactory') {
+      when {
+        expression { 
+          params.PUSH_ARTIFACTORY == true
+        }
+      }
+      parallel {
+        stage('Push image with latest to Artifactory') {
           steps {
             script {
                 docker.withRegistry('https://datoma.jfrog.io/artifactory', 'ArtifactoryDockerhub') {
+                artifactoryImageLatest.push()
+              }
+            }
+          }
+        }
+        stage('Push image with tag to Artifactory') {
+          steps {
+            script {
+              docker.withRegistry('https://datoma.jfrog.io/artifactory', 'ArtifactoryDockerhub') {
                 artifactoryImageTag.push()
               }
             }
@@ -165,10 +188,17 @@ pipeline {
       archiveArtifacts artifacts: '*.txt', onlyIfSuccessful: true
       sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:latest"
       sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
-      sh "docker rmi registry.hub.docker.com/${DOCKERHUB_IMAGE_NAME}:latest"
-      sh "docker rmi registry.hub.docker.com/${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
-      sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
-      sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+    }
+    success {
+      script {
+        when {
+          expression { 
+            params.PUSH_ARTIFACTORY == true
+          }
+        }
+        sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
+        sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+      }
     }
   }
 }
