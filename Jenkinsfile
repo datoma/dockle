@@ -6,15 +6,30 @@ pipeline {
     dockerHubImagetag = ''
     artifactoryImageLatest = ''
     artifactoryImageTag = ''
+    
     GIT_URL = 'git@github.com:datoma/dockle.git'
     GIT_BRANCH = 'master'
     GIT_CREDENTIALS = 'Github_ssh'
+    DOCKERHUB_URL = 'https://registry.hub.docker.com'
+    DOCKERHUB_CREDENTIALS = 'dockerhub'
+    ARTIFACTORY_URL = 'https://datoma.jfrog.io/artifactory'
+    ARTIFACTORY_CREDENTIALS = 'ArtifactoryDockerhub'
+
+    TRIVY_VERSION = 'datoma/trivy-server:0.15.0'
+    DOCKLE_VERSION = 'datoma/dockle:0.3.1'
+    HADOLINT_VERSION = 'hadolint/hadolint'
   }
 
   parameters{
     string(defaultValue: "latest", description: 'tag to build/push', name: 'DOCKER_IMAGE_TAG')
+    booleanParam(defaultValue: false, description: 'create release branch', name: 'CREATE_RELEASE_BRANCH')
     booleanParam(defaultValue: false, description: 'deploy to dockerhub', name: 'PUSH_DOCKER')
     booleanParam(defaultValue: false, description: 'deploy to artifactory', name: 'PUSH_ARTIFACTORY')
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '', artifactNumToKeepStr: '15'))
+    disableConcurrentBuilds()
   }
 
   agent any
@@ -38,25 +53,33 @@ pipeline {
         }
       }
     }
-    //stage ("Prompt for input") {
-    //  steps {
-    //    script {
-    //      env.DOCKER_IMAGE_TAG = input message: 'Please enter the docker image tag', parameters: [string(defaultValue: '', description: '', name: 'DockerImageTag')]
-    //      echo "docker tag: ${env.DOCKER_IMAGE_TAG}"
-    //    }
-    //  }
-    //}
 
     stage('Clone') {
       steps {
         git(url: "${GIT_URL}", branch: "${GIT_BRANCH}", credentialsId: "${GIT_CREDENTIALS}")
+
       }
+    }
+    
+    stage('create branch') {
+      when {
+        expression { 
+          params.CREATE_RELEASE_BRANCH == true
+        }
+      }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'Github_ssh', keyFileVariable: '', passphraseVariable: '', usernameVariable: '')]) {
+          //sh("git push origin ${GIT_BRANCH}:release-${DOCKER_IMAGE_TAG}")
+          sh("git checkout -b releases/${DOCKER_IMAGE_TAG}")
+          sh("git push --set-upstream origin releases/${DOCKER_IMAGE_TAG}")
+        }
+       }
     }
 
     stage('Building the image') {
       steps {
         script {
-          docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+          docker.withRegistry("${DOCKERHUB_URL}", "${DOCKERHUB_CREDENTIALS}") {
             dockerHubImageLatest = docker.build("${DOCKERHUB_IMAGE_NAME}:latest")
           }
         }
@@ -66,7 +89,7 @@ pipeline {
     stage('Tagging the image') {
       steps {
         script {
-          docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+          docker.withRegistry("${DOCKERHUB_URL}", "${DOCKERHUB_CREDENTIALS}") {
             dockerHubImagetag = docker.build("${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
           }
         }
@@ -78,8 +101,8 @@ pipeline {
         stage('Trivy Tag and latest') {
           steps {
               script {
-                trivy_latest = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro datoma/trivy-server:latest trivy client --remote https://trivy.blackboards.de ${DOCKERHUB_IMAGE_NAME}:latest')
-                trivy_tag = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro datoma/trivy-server:latest trivy client --remote https://trivy.blackboards.de --ignore-unfixed --severity CRITICAL,HIGH,MEDIUM ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
+                trivy_latest = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro ${TRIVY_VERSION} trivy client --remote https://trivy.blackboards.de ${DOCKERHUB_IMAGE_NAME}:latest')
+                trivy_tag = sh(returnStdout: true, script: 'docker run --name trivy-client --rm -i -v /var/run/docker.sock:/var/run/docker.sock:ro ${TRIVY_VERSION} trivy client --remote https://trivy.blackboards.de --ignore-unfixed --severity CRITICAL,HIGH,MEDIUM ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
               }
               echo "TRIVY latest: ${trivy_latest}"
               writeFile(file: 'trivy-latest.txt', text: "${trivy_latest}")
@@ -90,7 +113,7 @@ pipeline {
         stage('dockle Tag') {
           steps {
             script {
-                dockle_tag = sh(returnStdout: true, script: 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock datoma/dockle:latest ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
+                dockle_tag = sh(returnStdout: true, script: 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ${DOCKLE_VERSION} ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}')
               }
               echo "Dockle tag: ${dockle_tag}"
               writeFile(file: 'dockle_tag.txt', text: "${dockle_tag}")
@@ -100,7 +123,7 @@ pipeline {
           steps {
             script {
               try {
-                sh 'docker run --rm -i hadolint/hadolint < Dockerfile | tee hadolint_tag.txt'
+                sh 'docker run --rm -i ${HADOLINT_VERSION} < Dockerfile | tee hadolint_tag.txt'
               } catch (err) {
                 echo err.getMessage()
               }
@@ -121,7 +144,7 @@ pipeline {
         stage('Deploy image with latest to Dockerhub') {
           steps {
             script {
-              docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+              docker.withRegistry("${DOCKERHUB_URL}", "${DOCKERHUB_CREDENTIALS}") {
                 dockerHubImageLatest.push()
               }
             }
@@ -130,7 +153,7 @@ pipeline {
         stage('Deploy image with tag to Dockerhub') {
           steps {
             script {
-              docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {
+              docker.withRegistry("${DOCKERHUB_URL}", "${DOCKERHUB_CREDENTIALS}") {
                 dockerHubImagetag.push()
               }
             }
@@ -163,7 +186,7 @@ pipeline {
         stage('Push image with latest to Artifactory') {
           steps {
             script {
-                docker.withRegistry('https://datoma.jfrog.io/artifactory', 'ArtifactoryDockerhub') {
+                docker.withRegistry("${ARTIFACTORY_URL}", "${ARTIFACTORY_CREDENTIALS}") {
                 artifactoryImageLatest.push()
               }
             }
@@ -172,7 +195,7 @@ pipeline {
         stage('Push image with tag to Artifactory') {
           steps {
             script {
-              docker.withRegistry('https://datoma.jfrog.io/artifactory', 'ArtifactoryDockerhub') {
+              docker.withRegistry("${ARTIFACTORY_URL}", "${ARTIFACTORY_CREDENTIALS}") {
                 artifactoryImageTag.push()
               }
             }
@@ -186,7 +209,7 @@ pipeline {
     always {
       archiveArtifacts artifacts: '*.txt', onlyIfSuccessful: true
       sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:latest"
-      sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+      //sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
     }
     success {
       script {
