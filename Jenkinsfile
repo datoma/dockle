@@ -17,7 +17,7 @@ pipeline {
 
     TRIVY_VERSION = 'datoma/trivy-server:0.15.0'
     DOCKLE_VERSION = 'datoma/dockle:0.3.1'
-    HADOLINT_VERSION = 'hadolint/hadolint'
+    HADOLINT_VERSION = 'datoma/hadolint:1.21.0'
   }
 
   parameters{
