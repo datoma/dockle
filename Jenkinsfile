@@ -12,7 +12,7 @@ pipeline {
   }
 
   parameters{
-    text(defaultValue: "latest", description: 'tag to build/push', name: 'DOCKER_IMAGE_TAG')
+    string(defaultValue: "latest", description: 'tag to build/push', name: 'DOCKER_IMAGE_TAG')
     booleanParam(defaultValue: false, description: 'deploy to dockerhub', name: 'PUSH_DOCKER')
     booleanParam(defaultValue: false, description: 'deploy to artifactory', name: 'PUSH_ARTIFACTORY')
   }
