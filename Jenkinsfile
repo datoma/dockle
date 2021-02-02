@@ -6,7 +6,6 @@ pipeline {
     dockerHubImagetag = ''
     artifactoryImageLatest = ''
     artifactoryImageTag = ''
-    imageLine = 'datoma/dockle:latest'
     GIT_URL = 'git@github.com:datoma/dockle.git'
     GIT_BRANCH = 'master'
     GIT_CREDENTIALS = 'Github_ssh'
@@ -25,7 +24,7 @@ pipeline {
         script {
           params.each {
             if (DOCKER_IMAGE_TAG == null || DOCKER_IMAGE_TAG == "" || DOCKER_IMAGE_TAG == "latest")
-              ex(DOCKER_IMAGE_TAG)
+              error "This pipeline stops here because no tag was set (var is ${DOCKER_IMAGE_TAG})"
             }
         }
       }
@@ -191,13 +190,10 @@ pipeline {
     }
     success {
       script {
-        when {
-          expression { 
-            params.PUSH_ARTIFACTORY == true
-          }
+        if (params.PUSH_ARTIFACTORY == true) {
+          sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
+          sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
         }
-        sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
-        sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
       }
     }
   }
