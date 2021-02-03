@@ -14,6 +14,8 @@ pipeline {
     DOCKERHUB_CREDENTIALS = 'dockerhub'
     ARTIFACTORY_URL = 'https://datoma.jfrog.io/artifactory'
     ARTIFACTORY_CREDENTIALS = 'ArtifactoryDockerhub'
+    ANCHORE_URL = 'https://anchore.blackboards.de'
+    ANCHORE_CREDENTIALS = 'anchore'
 
     TRIVY_VERSION = 'datoma/trivy-server:0.15.0'
     DOCKLE_VERSION = 'datoma/dockle:0.3.1'
@@ -117,6 +119,14 @@ pipeline {
               }
               echo "Dockle tag: ${dockle_tag}"
               writeFile(file: 'dockle_tag.txt', text: "${dockle_tag}")
+          }
+        }
+        stage('anchore') {
+          steps {
+            script {
+                sh 'echo "${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" > anchore_images'
+                anchore engineCredentialsId: "${ANCHORE_CREDENTIALS}", engineRetries: '600', engineurl: "${ANCHORE_URL}", name: 'anchore_images'
+              }
           }
         }
         stage('hadolint Tag') {
