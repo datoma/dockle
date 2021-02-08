@@ -17,7 +17,7 @@ pipeline {
     ANCHORE_URL = 'https://anchore.blackboards.de'
     ANCHORE_CREDENTIALS = 'anchore'
 
-    TRIVY_VERSION = 'datoma/trivy-server:0.15.0'
+    TRIVY_VERSION = 'datoma/trivy-server:0.16.0'
     DOCKLE_VERSION = 'datoma/dockle:0.3.1'
     HADOLINT_VERSION = 'datoma/hadolint:1.21.0'
   }
@@ -234,14 +234,22 @@ pipeline {
       archiveArtifacts artifacts: '*.txt', onlyIfSuccessful: true
       sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:latest"
       //sh "docker rmi ${DOCKERHUB_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+      sh 'docker rmi $(docker images --filter "dangling=true" -q --no-trunc) 2>/dev/null'
     }
     success {
       script {
-        if (params.PUSH_ARTIFACTORY == true) {
-          sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
-          sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+        try {
+          if (params.PUSH_ARTIFACTORY == true) {
+            sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:latest"
+            sh "docker rmi ${ARTIFACTORY_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+            sh "docker rmi registry.hub.docker.com/:latest"
+            sh "docker rmi registry.hub.docker.com/:${DOCKER_IMAGE_TAG}"
+          }
+        } catch (err) {
+          echo err.getMessage()
         }
       }
     }
   }
+
 }
