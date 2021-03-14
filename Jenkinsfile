@@ -18,7 +18,7 @@ pipeline {
     ANCHORE_CREDENTIALS = 'anchore'
 
     TRIVY_VERSION = 'datoma/trivy-server:0.16.0'
-    DOCKLE_VERSION = 'datoma/dockle:0.3.10'
+    DOCKLE_VERSION = 'datoma/dockle:0.3.11'
     HADOLINT_VERSION = 'datoma/hadolint:1.21.0'
   }
 
